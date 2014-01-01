@@ -117,17 +117,17 @@ bool is_matrix(const std::string& parameter_name) {
   return (parameter_name.find("[") != std::string::npos);
 }
 
-std::string base_param_name(stan::mcmc::chains<>& chains, const int index) {
+std::string base_param_name(stan::mcmc::chains<> const & chains, const int index) {
   std::string name = chains.param_name(index);
   return name.substr(0, name.find("["));
 }
 
-std::string matrix_index(stan::mcmc::chains<>& chains, const int index) {
+std::string matrix_index(stan::mcmc::chains<> const & chains, const int index) {
   std::string name = chains.param_name(index);
   return name.substr(name.find("["));
 }
 
-std::vector<int> dimensions(stan::mcmc::chains<>& chains, const int start_index) {
+std::vector<int> dimensions(stan::mcmc::chains<> const & chains, const int start_index) {
   std::vector<int> dims;
   int dim;
 
@@ -167,7 +167,7 @@ void next_index(std::vector<int>& index, const std::vector<int>& dims) {
     }
   }
   
-  for (int n = 0; n < dims.size(); n++) {
+  for (std::size_t n = 0; n < dims.size(); n++) {
     if (index[n] <= 0 || index[n] > dims[n]) {
       std::stringstream message_stream("");
       message_stream << "next_index: index[" << n << "] out of bounds. "
@@ -180,12 +180,12 @@ void next_index(std::vector<int>& index, const std::vector<int>& dims) {
 
 // return the flat 0-based index of a column major order matrix based on the 
 // 1-based index
-int matrix_index(std::vector<int>& index, const std::vector<int>& dims) {
+int matrix_index(std::vector<int> const & index, const std::vector<int>& dims) {
   if (dims.size() != index.size())
     throw std::domain_error("next_index: size mismatch");
   if (dims.size() == 0)
     return 0;
-  for (int n = 0; n < dims.size(); n++) {
+  for (std::size_t n = 0; n < dims.size(); n++) {
     if (index[n] <= 0 || index[n] > dims[n]) {
       std::stringstream message_stream("");
       message_stream << "matrix_index: index[" << n << "] out of bounds. "
@@ -197,7 +197,7 @@ int matrix_index(std::vector<int>& index, const std::vector<int>& dims) {
 
   int offset = 0;
   int prod = 1;
-  for (int i = 0; i < dims.size(); i++) {
+  for (std::size_t i = 0; i < dims.size(); i++) {
     offset += (index[i]-1) * prod;
     prod *= dims[i];
   }
