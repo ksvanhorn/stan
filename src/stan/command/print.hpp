@@ -117,17 +117,17 @@ bool is_matrix(const std::string& parameter_name) {
   return (parameter_name.find("[") != std::string::npos);
 }
 
-std::string base_param_name(stan::mcmc::chains<>& chains, const int index) {
+std::string base_param_name(stan::mcmc::chains<> const & chains, const int index) {
   std::string name = chains.param_name(index);
   return name.substr(0, name.find("["));
 }
 
-std::string matrix_index(stan::mcmc::chains<>& chains, const int index) {
+std::string matrix_index(stan::mcmc::chains<> const & chains, const int index) {
   std::string name = chains.param_name(index);
   return name.substr(name.find("["));
 }
 
-std::vector<int> dimensions(stan::mcmc::chains<>& chains, const int start_index) {
+std::vector<int> dimensions(stan::mcmc::chains<> const & chains, const int start_index) {
   std::vector<int> dims;
   int dim;
 
@@ -180,7 +180,7 @@ void next_index(std::vector<int>& index, const std::vector<int>& dims) {
 
 // return the flat 0-based index of a column major order matrix based on the 
 // 1-based index
-int matrix_index(std::vector<int>& index, const std::vector<int>& dims) {
+int matrix_index(std::vector<int> const & index, const std::vector<int>& dims) {
   if (dims.size() != index.size())
     throw std::domain_error("next_index: size mismatch");
   if (dims.size() == 0)
