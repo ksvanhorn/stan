@@ -61,6 +61,7 @@ class printer : private printer_base
 {
   static const int n = 9;
   static const int skip = 0;
+
   int sig_figs;
   Eigen::Matrix<std::string, Eigen::Dynamic, 1> headers;
   Eigen::MatrixXd values;
@@ -360,6 +361,9 @@ public:
   } 
 
 };
+
+const int printer::n;
+const int printer::skip;
 
 /**
  * The Stan print function.
