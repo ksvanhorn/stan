@@ -110,6 +110,9 @@ void print_usage() {
   std::cout << "  --sig_figs=<int>\tSet significant figures of output (Defaults to 2)"
             << std::endl
             << std::endl;
+  std::cout << "  --csv_output\tWrite output in .csv format"
+            << std::endl
+            << std::endl;
   
 }
 

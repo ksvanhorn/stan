@@ -4,6 +4,7 @@
 #include <ios>
 #include <stan/mcmc/chains.hpp>
 #include <stan/command/print.hpp>
+#include <boost/scoped_ptr.hpp>
 
 class printer_base0
 {
@@ -23,7 +24,7 @@ protected:
   std::string engine;
 
   printer_base0(stan::io::stan_csv const & stan_csv0,
-		std::vector<std::string> filenames)
+		std::vector<std::string> const & filenames)
     : chains(stan_csv0),
       warmup_times(filenames.size()),
       sampling_times(filenames.size()),
@@ -41,8 +42,7 @@ protected:
 class printer_base : protected printer_base0
 {
 protected:
-
-  printer_base(std::vector<std::string> filenames)
+  printer_base(std::vector<std::string> const & filenames)
     : printer_base0(get_stan_csv(filenames[0]), filenames)
   {
     typedef std::vector<std::string>::size_type size_type;
@@ -57,8 +57,9 @@ protected:
   }
 };
 
-class printer : private printer_base
+class printer : protected printer_base
 {
+protected:
   static const int n = 9;
   static const int skip = 0;
 
@@ -67,14 +68,12 @@ class printer : private printer_base
   Eigen::MatrixXd values;
 
 public:
-
-  printer(int sig_figs_, std::vector<std::string> filenames)
+  printer(int sig_figs_, std::vector<std::string> const & filenames)
     : printer_base(filenames),
       sig_figs(sig_figs_),
       headers(n),
       values(chains.num_params(), n)
   {
-
     // Prepare values
     values.setZero();
     Eigen::VectorXd probs(3);
@@ -101,7 +100,79 @@ public:
       "N_Eff", "N_Eff/s", "R_hat";
   }
 
-  void print_csv()
+  virtual void print() = 0;
+
+  void print_autocorr(int c)
+  {
+    size_t max_name_length = max_name_len();
+    if (c < 0 || c >= chains.num_chains()) {
+      std::cout << "Bad chain index " << c
+		<< ", aborting autocorrelation display." << std::endl;
+      return;
+    }
+    
+    Eigen::MatrixXd autocorr(chains.num_params(), chains.num_samples(c));
+    
+    for (int i = 0; i < chains.num_params(); i++) {
+      autocorr.row(i) = chains.autocorrelation(c, i);
+    }
+    
+    // Format and print header
+    std::cout << "Displaying the autocorrelations for chain " << c << ":"
+	      << std::endl
+	      << std::endl;
+    
+    const int n_autocorr = autocorr.row(0).size();
+    
+    int lag_width = 1;
+    int number = n_autocorr; 
+    while ( number != 0) { number /= 10; lag_width++; }
+
+    std::cout << std::setw(lag_width > 4 ? lag_width : 4) << "Lag";
+    for (int i = 0; i < chains.num_params(); ++i) {
+      std::cout << std::setw(max_name_length + 1) << std::right
+		<< chains.param_name(i);
+    }
+    std::cout << std::endl;
+
+    // Print body  
+    for (int n = 0; n < n_autocorr; ++n) {
+      std::cout << std::setw(lag_width) << std::right << n;
+      for (int i = 0; i < chains.num_params(); ++i) {
+        std::cout << std::setw(max_name_length + 1) << std::right
+		  << autocorr(i, n);
+      }
+      std::cout << std::endl;
+    }
+  }
+
+protected:
+  std::size_t max_name_len()
+  {
+    // Compute largest variable name length
+    size_t max_name_length = 0;
+    for (int i = skip; i < chains.num_params(); i++) 
+      if (chains.param_name(i).length() > max_name_length)
+        max_name_length = chains.param_name(i).length();
+    for (int i = 0; i < 2; i++) 
+      if (chains.param_name(i).length() > max_name_length)
+        max_name_length = chains.param_name(i).length();
+    return max_name_length;
+  }
+};
+
+const int printer::n;
+const int printer::skip;
+
+class csv_printer : public printer
+{
+public:
+  csv_printer(int sig_figs_, std::vector<std::string> const & filenames)
+    : printer(sig_figs_, filenames)
+  {
+  }
+
+  void print()
   {
     // Header output
     for (int i = 0; i < n; i++) {
@@ -144,7 +215,79 @@ public:
       }
     }
   }
+};
 
+class text_printer : public printer
+{
+public:
+  text_printer(int sig_figs_, std::vector<std::string> const & filenames)
+    : printer(sig_figs_, filenames)
+  {
+  }
+
+  void print()
+  {
+    print_initial_output();
+
+    // Compute largest variable name length
+    size_t max_name_length = max_name_len();
+
+    // Compute column widths
+    Eigen::VectorXi column_widths(n);
+    Eigen::Matrix<std::ios_base::fmtflags, Eigen::Dynamic, 1> formats(n);
+    column_widths = calculate_column_widths(values, headers, sig_figs, formats);
+  
+    // Header output
+    std::cout << std::setw(max_name_length + 1) << "";
+    for (int i = 0; i < n; i++) {
+      std::cout << std::setw(column_widths(i)) << headers(i);
+    }
+    std::cout << std::endl;
+  
+    // Value output
+    for (int i = skip; i < chains.num_params(); i++) {
+      if (!is_matrix(chains.param_name(i))) {
+	std::cout << std::setw(max_name_length + 1) << std::left << chains.param_name(i);
+	std::cout << std::right;
+	for (int j = 0; j < n; j++) {
+	  std::cout.setf(formats(j), std::ios::floatfield);
+	  int prec = compute_precision(values(i,j), sig_figs, formats(j) == std::ios_base::scientific);
+	  std::cout << std::setprecision(prec)
+		    << std::setw(column_widths(j)) << values(i, j);
+	}
+	std::cout << std::endl;
+      } else {
+	std::vector<int> dims = dimensions(chains, i);
+	std::vector<int> index(dims.size(), 1);
+	int max = 1;
+	for (std::size_t j = 0; j < dims.size(); j++)
+	  max *= dims[j];
+
+	for (int k = 0; k < max; k++) {
+	  int param_index = i + matrix_index(index, dims);
+	  std::cout << std::setw(max_name_length + 1) << std::left 
+		    << chains.param_name(param_index);
+	  std::cout << std::right;
+	  for (int j = 0; j < n; j++) {
+	    std::cout.setf(formats(j), std::ios::floatfield);
+	    int prec = compute_precision(values(param_index,j), sig_figs, 
+					 formats(j) == std::ios_base::scientific);
+	    std::cout 
+	      << std::setprecision(prec)
+	      << std::setw(column_widths(j)) << values(param_index, j);
+	  }
+	  std::cout << std::endl;
+	  if (k < max - 1)
+	    next_index(index, dims);
+	}
+	i += max-1;
+      }
+    }
+
+    print_footer_output();
+  }
+
+private:
   void print_initial_output()
   {
     double total_warmup_time = warmup_times.sum();
@@ -240,130 +383,7 @@ public:
 	      << "convergence, R_hat=1)." << std::endl
 	      << std::endl;
   }
-
-  std::size_t max_name_len()
-  {
-    // Compute largest variable name length
-    size_t max_name_length = 0;
-    for (int i = skip; i < chains.num_params(); i++) 
-      if (chains.param_name(i).length() > max_name_length)
-        max_name_length = chains.param_name(i).length();
-    for (int i = 0; i < 2; i++) 
-      if (chains.param_name(i).length() > max_name_length)
-        max_name_length = chains.param_name(i).length();
-    return max_name_length;
-  }
-
-  void print_text()
-  {
-    print_initial_output();
-
-    // Compute largest variable name length
-    size_t max_name_length = max_name_len();
-
-    // Compute column widths
-    Eigen::VectorXi column_widths(n);
-    Eigen::Matrix<std::ios_base::fmtflags, Eigen::Dynamic, 1> formats(n);
-    column_widths = calculate_column_widths(values, headers, sig_figs, formats);
-  
-    // Header output
-    std::cout << std::setw(max_name_length + 1) << "";
-    for (int i = 0; i < n; i++) {
-      std::cout << std::setw(column_widths(i)) << headers(i);
-    }
-    std::cout << std::endl;
-  
-    // Value output
-    for (int i = skip; i < chains.num_params(); i++) {
-      if (!is_matrix(chains.param_name(i))) {
-	std::cout << std::setw(max_name_length + 1) << std::left << chains.param_name(i);
-	std::cout << std::right;
-	for (int j = 0; j < n; j++) {
-	  std::cout.setf(formats(j), std::ios::floatfield);
-	  int prec = compute_precision(values(i,j), sig_figs, formats(j) == std::ios_base::scientific);
-	  std::cout << std::setprecision(prec)
-		    << std::setw(column_widths(j)) << values(i, j);
-	}
-	std::cout << std::endl;
-      } else {
-	std::vector<int> dims = dimensions(chains, i);
-	std::vector<int> index(dims.size(), 1);
-	int max = 1;
-	for (std::size_t j = 0; j < dims.size(); j++)
-	  max *= dims[j];
-
-	for (int k = 0; k < max; k++) {
-	  int param_index = i + matrix_index(index, dims);
-	  std::cout << std::setw(max_name_length + 1) << std::left 
-		    << chains.param_name(param_index);
-	  std::cout << std::right;
-	  for (int j = 0; j < n; j++) {
-	    std::cout.setf(formats(j), std::ios::floatfield);
-	    int prec = compute_precision(values(param_index,j), sig_figs, 
-					 formats(j) == std::ios_base::scientific);
-	    std::cout 
-	      << std::setprecision(prec)
-	      << std::setw(column_widths(j)) << values(param_index, j);
-	  }
-	  std::cout << std::endl;
-	  if (k < max - 1)
-	    next_index(index, dims);
-	}
-	i += max-1;
-      }
-    }
-
-    print_footer_output();
-  }
-
-  void print_autocorr(int c)
-  {
-    size_t max_name_length = max_name_len();
-    if (c < 0 || c >= chains.num_chains()) {
-      std::cout << "Bad chain index " << c
-		<< ", aborting autocorrelation display." << std::endl;
-      return;
-    }
-    
-    Eigen::MatrixXd autocorr(chains.num_params(), chains.num_samples(c));
-    
-    for (int i = 0; i < chains.num_params(); i++) {
-      autocorr.row(i) = chains.autocorrelation(c, i);
-    }
-    
-    // Format and print header
-    std::cout << "Displaying the autocorrelations for chain " << c << ":"
-	      << std::endl
-	      << std::endl;
-    
-    const int n_autocorr = autocorr.row(0).size();
-    
-    int lag_width = 1;
-    int number = n_autocorr; 
-    while ( number != 0) { number /= 10; lag_width++; }
-
-    std::cout << std::setw(lag_width > 4 ? lag_width : 4) << "Lag";
-    for (int i = 0; i < chains.num_params(); ++i) {
-      std::cout << std::setw(max_name_length + 1) << std::right
-		<< chains.param_name(i);
-    }
-    std::cout << std::endl;
-
-    // Print body  
-    for (int n = 0; n < n_autocorr; ++n) {
-      std::cout << std::setw(lag_width) << std::right << n;
-      for (int i = 0; i < chains.num_params(); ++i) {
-        std::cout << std::setw(max_name_length + 1) << std::right
-		  << autocorr(i, n);
-      }
-      std::cout << std::endl;
-    }
-  } 
-
 };
-
-const int printer::n;
-const int printer::skip;
 
 /**
  * The Stan print function.
@@ -421,17 +441,18 @@ int main(int argc, const char* argv[]) {
     return 0;
   }
   
-  printer prnt(sig_figs, filenames);
-  
+  boost::scoped_ptr<printer> prnt;
   if (csv_output)
-    prnt.print_csv();
+    prnt.reset(new csv_printer(sig_figs, filenames));
   else
-    prnt.print_text();
+    prnt.reset(new text_printer(sig_figs, filenames));
+
+  prnt->print();
   
   // Print autocorrelation, if desired
   if (!csv_output && corr_len >= 0)
-    prnt.print_autocorr(corr_len);
-      
+    prnt->print_autocorr(corr_len);
+
   return 0;
         
 }
