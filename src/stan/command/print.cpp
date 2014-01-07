@@ -100,7 +100,44 @@ public:
       "N_Eff", "N_Eff/s", "R_hat";
   }
 
-  virtual void print(std::ostream&) = 0;
+  void print(std::ostream & os)
+  {
+    init_output(os);
+    // Header output
+    init_header(os);
+    for (int i = 0; i < n; i++)
+      write_col_header(os, i);
+    os << std::endl;
+    
+    // Value output
+    for (int i = skip; i < chains.num_params(); i++) {
+      if (!is_matrix(chains.param_name(i))) {
+	write_row_header(os, i);
+        for (int j = 0; j < n; j++)
+	  write_value(os, i, j);
+        os << std::endl;
+      } 
+      else {
+        std::vector<int> dims = dimensions(chains, i);
+        std::vector<int> index(dims.size(), 1);
+        int max = 1;
+        for (std::size_t j = 0; j < dims.size(); j++)
+          max *= dims[j];
+
+        for (int k = 0; k < max; k++) {
+          int param_index = i + matrix_index(index, dims);
+	  write_row_header(os, param_index);
+          for (int j = 0; j < n; j++)
+	    write_value(os, param_index, j);
+          os << std::endl;
+	  if (k < max - 1)
+	    next_index(index, dims);
+        }
+        i += max-1;
+      }
+    }
+    end_output(os);
+  }
 
   void print_autocorr(int c)
   {
@@ -147,6 +184,13 @@ public:
   }
 
 protected:
+  virtual void init_output(std::ostream &) = 0;
+  virtual void end_output(std::ostream &) = 0;
+  virtual void init_header(std::ostream &) = 0;
+  virtual void write_col_header(std::ostream & os, int i) = 0;
+  virtual void write_row_header(std::ostream & os, int i) = 0;
+  virtual void write_value(std::ostream & os, int i, int j) = 0;
+
   std::size_t max_name_len()
   {
     // Compute largest variable name length
@@ -172,63 +216,25 @@ public:
   {
   }
 
-  void init_output(std::ostream &) { }
-  void end_output(std::ostream &) { }
-  void init_header(std::ostream &) { }
+private:
+  virtual void init_output(std::ostream &) { }
+  virtual void end_output(std::ostream &) { }
+  virtual void init_header(std::ostream &) { }
 
-  void write_col_header(std::ostream & os, int i)
+  virtual void write_col_header(std::ostream & os, int i)
   {
     os << "," << headers(i);
   }
 
-  void write_row_header(std::ostream & os, int i)
+  virtual void write_row_header(std::ostream & os, int i)
   {
     os << chains.param_name(i);
   }
 
-  void write_value(std::ostream & os, int i, int j)
+  virtual void write_value(std::ostream & os, int i, int j)
   {
     os.unsetf(std::ios::floatfield);
     os << ',' << std::setprecision(sig_figs) << values(i, j);
-  }
-
-  void print(std::ostream & os)
-  {
-    init_output(os);
-    // Header output
-    init_header(os);
-    for (int i = 0; i < n; i++)
-      write_col_header(os, i);
-    os << std::endl;
-    
-    // Value output
-    for (int i = skip; i < chains.num_params(); i++) {
-      if (!is_matrix(chains.param_name(i))) {
-	write_row_header(os, i);
-        for (int j = 0; j < n; j++)
-	  write_value(os, i, j);
-        os << std::endl;
-      } 
-      else {
-        std::vector<int> dims = dimensions(chains, i);
-        std::vector<int> index(dims.size(), 1);
-        int max = 1;
-        for (std::size_t j = 0; j < dims.size(); j++)
-          max *= dims[j];
-
-        for (int k = 0; k < max; k++) {
-          int param_index = i + matrix_index(index, dims);
-	  write_row_header(os, param_index);
-          for (int j = 0; j < n; j++)
-	    write_value(os, param_index, j);
-          os << std::endl;
-	  if (k < max - 1)
-	    next_index(index, dims);
-        }
-        i += max-1;
-      }
-    }
-    end_output(os);
   }
 };
 
@@ -248,23 +254,24 @@ public:
     column_widths = calculate_column_widths(values, headers, sig_figs, formats);
   }
 
-  void init_header(std::ostream & os)
+private:
+  virtual void init_header(std::ostream & os)
   {
     os << std::setw(max_name_length + 1) << "";
   }
 
-  void write_col_header(std::ostream & os, int i)
+  virtual void write_col_header(std::ostream & os, int i)
   {
     os << std::setw(column_widths(i)) << headers(i);
   }
 
-  void write_row_header(std::ostream & os, int i)
+  virtual void write_row_header(std::ostream & os, int i)
   {
     os << std::setw(max_name_length + 1) << std::left << chains.param_name(i)
        << std::right;
   }
 
-  void write_value(std::ostream & os, int i, int j)
+  virtual void write_value(std::ostream & os, int i, int j)
   {
     os.setf(formats(j), std::ios::floatfield);
     int prec = compute_precision(values(i,j), sig_figs,
@@ -273,49 +280,7 @@ public:
        << std::setw(column_widths(j)) << values(i, j);
   }
 
-  virtual void print(std::ostream & os)
-  {
-    init_output(os);
-
-    // Header output
-    init_header(os);
-    for (int i = 0; i < n; i++)
-      write_col_header(os, i);
-    os << std::endl;
-  
-    // Value output
-    for (int i = skip; i < chains.num_params(); i++) {
-      if (!is_matrix(chains.param_name(i))) {
-	write_row_header(os, i);
-	for (int j = 0; j < n; j++)
-	  write_value(os, i, j);
-	os << std::endl;
-      } 
-      else {
-	std::vector<int> dims = dimensions(chains, i);
-	std::vector<int> index(dims.size(), 1);
-	int max = 1;
-	for (std::size_t j = 0; j < dims.size(); j++)
-	  max *= dims[j];
-
-	for (int k = 0; k < max; k++) {
-	  int param_index = i + matrix_index(index, dims);
-	  write_row_header(os, param_index);
-	  for (int j = 0; j < n; j++)
-	    write_value(os, param_index, j);
-	  os << std::endl;
-	  if (k < max - 1)
-	    next_index(index, dims);
-	}
-	i += max-1;
-      }
-    }
-
-    end_output(os);
-  }
-
-private:
-  void init_output(std::ostream & os)
+  virtual void init_output(std::ostream & os)
   {
     double total_warmup_time = warmup_times.sum();
     double total_sampling_time = sampling_times.sum();
@@ -392,7 +357,7 @@ private:
     os << std::endl;
   }
 
-  void end_output(std::ostream & os)
+  virtual void end_output(std::ostream & os)
   {
     os << std::endl;
     os << "Samples were drawn using " << algorithm
