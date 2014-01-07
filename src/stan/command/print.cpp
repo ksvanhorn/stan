@@ -100,7 +100,7 @@ public:
       "N_Eff", "N_Eff/s", "R_hat";
   }
 
-  virtual void print() = 0;
+  virtual void print(std::ostream&) = 0;
 
   void print_autocorr(int c)
   {
@@ -158,7 +158,7 @@ protected:
       if (chains.param_name(i).length() > max_name_length)
         max_name_length = chains.param_name(i).length();
     return max_name_length;
-  }
+  }  
 };
 
 const int printer::n;
@@ -172,26 +172,44 @@ public:
   {
   }
 
-  void print()
+  void init_output(std::ostream &) { }
+  void end_output(std::ostream &) { }
+  void init_header(std::ostream &) { }
+
+  void write_col_header(std::ostream & os, int i)
   {
+    os << "," << headers(i);
+  }
+
+  void write_row_header(std::ostream & os, int i)
+  {
+    os << chains.param_name(i);
+  }
+
+  void write_value(std::ostream & os, int i, int j)
+  {
+    os.unsetf(std::ios::floatfield);
+    os << ',' << std::setprecision(sig_figs) << values(i, j);
+  }
+
+  void print(std::ostream & os)
+  {
+    init_output(os);
     // Header output
-    for (int i = 0; i < n; i++) {
-      std::cout << ',' << headers(i);
-    }
-    std::cout << std::endl;
+    init_header(os);
+    for (int i = 0; i < n; i++)
+      write_col_header(os, i);
+    os << std::endl;
     
     // Value output
     for (int i = skip; i < chains.num_params(); i++) {
       if (!is_matrix(chains.param_name(i))) {
-        std::cout << chains.param_name(i);
-        for (int j = 0; j < n; j++) {
-          std::cout.unsetf(std::ios::floatfield);
-          std::cout << ','
-		    << std::setprecision(sig_figs)
-                    << values(i, j);
-        }
-        std::cout << std::endl;
-      } else {
+	write_row_header(os, i);
+        for (int j = 0; j < n; j++)
+	  write_value(os, i, j);
+        os << std::endl;
+      } 
+      else {
         std::vector<int> dims = dimensions(chains, i);
         std::vector<int> index(dims.size(), 1);
         int max = 1;
@@ -200,63 +218,80 @@ public:
 
         for (int k = 0; k < max; k++) {
           int param_index = i + matrix_index(index, dims);
-          std::cout << chains.param_name(param_index);
-          for (int j = 0; j < n; j++) {
-            std::cout.unsetf(std::ios::floatfield);
-            std::cout << ','
-		      << std::setprecision(sig_figs)
-		      << values(param_index, j);
-          }
-          std::cout << std::endl;
-  	if (k < max - 1)
-  	  next_index(index, dims);
+	  write_row_header(os, param_index);
+          for (int j = 0; j < n; j++)
+	    write_value(os, param_index, j);
+          os << std::endl;
+	  if (k < max - 1)
+	    next_index(index, dims);
         }
         i += max-1;
       }
     }
+    end_output(os);
   }
 };
 
 class text_printer : public printer
 {
+  size_t max_name_length;
+  Eigen::VectorXi column_widths;
+  Eigen::Matrix<std::ios_base::fmtflags, Eigen::Dynamic, 1> formats;
+
 public:
   text_printer(int sig_figs_, std::vector<std::string> const & filenames)
-    : printer(sig_figs_, filenames)
+    : printer(sig_figs_, filenames),
+      max_name_length(max_name_len()),
+      column_widths(n),
+      formats(n)
   {
+    column_widths = calculate_column_widths(values, headers, sig_figs, formats);
   }
 
-  void print()
+  void init_header(std::ostream & os)
   {
-    print_initial_output();
+    os << std::setw(max_name_length + 1) << "";
+  }
 
-    // Compute largest variable name length
-    size_t max_name_length = max_name_len();
+  void write_col_header(std::ostream & os, int i)
+  {
+    os << std::setw(column_widths(i)) << headers(i);
+  }
 
-    // Compute column widths
-    Eigen::VectorXi column_widths(n);
-    Eigen::Matrix<std::ios_base::fmtflags, Eigen::Dynamic, 1> formats(n);
-    column_widths = calculate_column_widths(values, headers, sig_figs, formats);
-  
+  void write_row_header(std::ostream & os, int i)
+  {
+    os << std::setw(max_name_length + 1) << std::left << chains.param_name(i)
+       << std::right;
+  }
+
+  void write_value(std::ostream & os, int i, int j)
+  {
+    os.setf(formats(j), std::ios::floatfield);
+    int prec = compute_precision(values(i,j), sig_figs,
+				 formats(j) == std::ios_base::scientific);
+    os << std::setprecision(prec)
+       << std::setw(column_widths(j)) << values(i, j);
+  }
+
+  virtual void print(std::ostream & os)
+  {
+    init_output(os);
+
     // Header output
-    std::cout << std::setw(max_name_length + 1) << "";
-    for (int i = 0; i < n; i++) {
-      std::cout << std::setw(column_widths(i)) << headers(i);
-    }
-    std::cout << std::endl;
+    init_header(os);
+    for (int i = 0; i < n; i++)
+      write_col_header(os, i);
+    os << std::endl;
   
     // Value output
     for (int i = skip; i < chains.num_params(); i++) {
       if (!is_matrix(chains.param_name(i))) {
-	std::cout << std::setw(max_name_length + 1) << std::left << chains.param_name(i);
-	std::cout << std::right;
-	for (int j = 0; j < n; j++) {
-	  std::cout.setf(formats(j), std::ios::floatfield);
-	  int prec = compute_precision(values(i,j), sig_figs, formats(j) == std::ios_base::scientific);
-	  std::cout << std::setprecision(prec)
-		    << std::setw(column_widths(j)) << values(i, j);
-	}
-	std::cout << std::endl;
-      } else {
+	write_row_header(os, i);
+	for (int j = 0; j < n; j++)
+	  write_value(os, i, j);
+	os << std::endl;
+      } 
+      else {
 	std::vector<int> dims = dimensions(chains, i);
 	std::vector<int> index(dims.size(), 1);
 	int max = 1;
@@ -265,18 +300,10 @@ public:
 
 	for (int k = 0; k < max; k++) {
 	  int param_index = i + matrix_index(index, dims);
-	  std::cout << std::setw(max_name_length + 1) << std::left 
-		    << chains.param_name(param_index);
-	  std::cout << std::right;
-	  for (int j = 0; j < n; j++) {
-	    std::cout.setf(formats(j), std::ios::floatfield);
-	    int prec = compute_precision(values(param_index,j), sig_figs, 
-					 formats(j) == std::ios_base::scientific);
-	    std::cout 
-	      << std::setprecision(prec)
-	      << std::setw(column_widths(j)) << values(param_index, j);
-	  }
-	  std::cout << std::endl;
+	  write_row_header(os, param_index);
+	  for (int j = 0; j < n; j++)
+	    write_value(os, param_index, j);
+	  os << std::endl;
 	  if (k < max - 1)
 	    next_index(index, dims);
 	}
@@ -284,34 +311,34 @@ public:
       }
     }
 
-    print_footer_output();
+    end_output(os);
   }
 
 private:
-  void print_initial_output()
+  void init_output(std::ostream & os)
   {
     double total_warmup_time = warmup_times.sum();
     double total_sampling_time = sampling_times.sum();
-    std::cout << "Inference for Stan model: " << model_name << std::endl
-	      << chains.num_chains() << " chains: each with iter=("
-	      << chains.num_kept_samples(0);
+    os << "Inference for Stan model: " << model_name << std::endl
+       << chains.num_chains() << " chains: each with iter=("
+       << chains.num_kept_samples(0);
     for (int chain = 1; chain < chains.num_chains(); chain++)
-      std::cout << "," << chains.num_kept_samples(chain);
-    std::cout << ")";
+      os << "," << chains.num_kept_samples(chain);
+    os << ")";
   
     // Timing output
-    std::cout << "; warmup=(" << chains.warmup(0);
+    os << "; warmup=(" << chains.warmup(0);
     for (int chain = 1; chain < chains.num_chains(); chain++)
-      std::cout << "," << chains.warmup(chain);
-    std::cout << ")";
+      os << "," << chains.warmup(chain);
+    os << ")";
                           
-    std::cout << "; thin=(" << thin(0);
+    os << "; thin=(" << thin(0);
   
     for (int chain = 1; chain < chains.num_chains(); chain++)
-      std::cout << "," << thin(chain);
-    std::cout << ")";
+      os << "," << thin(chain);
+    os << ")";
                           
-    std::cout << "; " << chains.num_samples() << " iterations saved."
+    os << "; " << chains.num_samples() << " iterations saved."
 	      << std::endl << std::endl;
 
     std::string warmup_unit = "seconds";
@@ -319,69 +346,61 @@ private:
     if (total_warmup_time / 3600 > 1) {
       total_warmup_time /= 3600;
       warmup_unit = "hours";
-    } else if (total_warmup_time / 60 > 1) {
+    }
+    else if (total_warmup_time / 60 > 1) {
       total_warmup_time /= 60;
       warmup_unit = "minutes";
     }
   
     int prec;
     prec = compute_precision(warmup_times(0), sig_figs, false);
-    std::cout << "Warmup took ("
-	      << std::fixed
-	      << std::setprecision(prec)
-	      << warmup_times(0);
+    os << "Warmup took ("
+       << std::fixed << std::setprecision(prec) << warmup_times(0);
     for (int chain = 1; chain < chains.num_chains(); chain++) {
       prec = compute_precision(warmup_times(chain), sig_figs, false);
-      std::cout << ", " << std::fixed
-		<< std::setprecision(prec)
-		<< warmup_times(chain);
+      os << ", " << std::fixed << std::setprecision(prec)
+	 << warmup_times(chain);
     }
-    std::cout << ") seconds, ";
+    os << ") seconds, ";
     prec = compute_precision(total_warmup_time, sig_figs, false);
-    std::cout << std::fixed
-	      << std::setprecision(prec)
-	      << total_warmup_time << " " << warmup_unit << " total"
-	      << std::endl;
+    os << std::fixed << std::setprecision(prec)
+       << total_warmup_time << " " << warmup_unit << " total" << std::endl;
 
     std::string sampling_unit = "seconds";
   
     if (total_sampling_time / 3600 > 1) {
       total_sampling_time /= 3600;
       sampling_unit = "hours";
-    } else if (total_sampling_time / 60 > 1) {
+    }
+    else if (total_sampling_time / 60 > 1) {
       total_sampling_time /= 60;
       sampling_unit = "minutes";
     }
 
     prec = compute_precision(sampling_times(0), sig_figs, false);
-    std::cout << "Sampling took ("
-	      << std::fixed
-	      << std::setprecision(prec)
-	      << sampling_times(0);
+    os << "Sampling took ("
+       << std::fixed << std::setprecision(prec) << sampling_times(0);
     for (int chain = 1; chain < chains.num_chains(); chain++) {
       prec = compute_precision(sampling_times(chain), sig_figs, false);
-      std::cout << ", " << std::fixed
-		<< std::setprecision(prec)
-		<< sampling_times(chain);
+      os << ", " << std::fixed << std::setprecision(prec)
+	 << sampling_times(chain);
     }
-    std::cout << ") seconds, ";
+    os << ") seconds, ";
     prec = compute_precision(total_sampling_time, sig_figs, false);
-    std::cout << std::fixed
-	      << std::setprecision(prec)
-	      << total_sampling_time << " " << sampling_unit << " total"
-	      << std::endl;
-    std::cout << std::endl;
+    os << std::fixed << std::setprecision(prec)
+       << total_sampling_time << " " << sampling_unit << " total" << std::endl;
+    os << std::endl;
   }
 
-  void print_footer_output()
+  void end_output(std::ostream & os)
   {
-    std::cout << std::endl;
-    std::cout << "Samples were drawn using " << algorithm
-	      << " with " << engine << "." << std::endl
-	      << "For each parameter, N_Eff is a crude measure of effective sample size," << std::endl
-	      << "and R_hat is the potential scale reduction factor on split chains (at " << std::endl
-	      << "convergence, R_hat=1)." << std::endl
-	      << std::endl;
+    os << std::endl;
+    os << "Samples were drawn using " << algorithm
+       << " with " << engine << "." << std::endl
+       << "For each parameter, N_Eff is a crude measure of effective sample size," << std::endl
+       << "and R_hat is the potential scale reduction factor on split chains (at " << std::endl
+       << "convergence, R_hat=1)." << std::endl
+       << std::endl;
   }
 };
 
@@ -447,7 +466,7 @@ int main(int argc, const char* argv[]) {
   else
     prnt.reset(new text_printer(sig_figs, filenames));
 
-  prnt->print();
+  prnt->print(std::cout);
   
   // Print autocorrelation, if desired
   if (!csv_output && corr_len >= 0)
