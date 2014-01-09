@@ -228,7 +228,7 @@ private:
 
   virtual void write_row_header(std::ostream & os, int i)
   {
-    os << chains.param_name(i);
+    os << '"' << chains.param_name(i) << '"';
   }
 
   virtual void write_value(std::ostream & os, int i, int j)
