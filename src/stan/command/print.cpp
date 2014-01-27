@@ -2,6 +2,7 @@
 #include <iostream>
 #include <iomanip>
 #include <ios>
+#include <sstream>
 #include <stan/mcmc/chains.hpp>
 #include <stan/command/print.hpp>
 #include <boost/scoped_ptr.hpp>
@@ -114,7 +115,7 @@ public:
       if (!is_matrix(chains.param_name(i))) {
 	write_row_header(os, i);
         for (int j = 0; j < n; j++)
-	  write_value(os, i, j);
+	  write_value(os, j, values(i, j));
         os << std::endl;
       } 
       else {
@@ -128,7 +129,7 @@ public:
           int param_index = i + matrix_index(index, dims);
 	  write_row_header(os, param_index);
           for (int j = 0; j < n; j++)
-	    write_value(os, param_index, j);
+	    write_value(os, j, values(param_index, j));
           os << std::endl;
 	  if (k < max - 1)
 	    next_index(index, dims);
@@ -139,49 +140,38 @@ public:
     end_output(os);
   }
 
-  void print_autocorr(int c)
+  void print_autocorr(std::ostream & os, int cidx)
   {
-    size_t max_name_length = max_name_len();
-    if (c < 0 || c >= chains.num_chains()) {
-      std::cout << "Bad chain index " << c
+    if (cidx < 0 || cidx >= chains.num_chains()) {
+      std::cerr << "Bad chain index " << cidx
 		<< ", aborting autocorrelation display." << std::endl;
       return;
     }
     
-    Eigen::MatrixXd autocorr(chains.num_params(), chains.num_samples(c));
+    Eigen::MatrixXd autocorr(chains.num_params(), chains.num_samples(cidx));
     
     for (int i = 0; i < chains.num_params(); i++) {
-      autocorr.row(i) = chains.autocorrelation(c, i);
+      autocorr.row(i) = chains.autocorrelation(cidx, i);
     }
-    
-    // Format and print header
-    std::cout << "Displaying the autocorrelations for chain " << c << ":"
-	      << std::endl
-	      << std::endl;
     
     const int n_autocorr = autocorr.row(0).size();
     
-    int lag_width = 1;
-    int number = n_autocorr; 
-    while ( number != 0) { number /= 10; lag_width++; }
-
-    std::cout << std::setw(lag_width > 4 ? lag_width : 4) << "Lag";
-    for (int i = 0; i < chains.num_params(); ++i) {
-      std::cout << std::setw(max_name_length + 1) << std::right
-		<< chains.param_name(i);
-    }
-    std::cout << std::endl;
+    init_output_ac(os, cidx);
+    write_lag_header_ac(os, n_autocorr);
+    for (int i = 0; i < chains.num_params(); ++i)
+      write_var_header_ac(os, i);
+    os << std::endl;
 
     // Print body  
     for (int n = 0; n < n_autocorr; ++n) {
-      std::cout << std::setw(lag_width) << std::right << n;
-      for (int i = 0; i < chains.num_params(); ++i) {
-        std::cout << std::setw(max_name_length + 1) << std::right
-		  << autocorr(i, n);
-      }
-      std::cout << std::endl;
+      write_row_header_ac(os, n);
+      for (int i = 0; i < chains.num_params(); ++i)
+	write_value_ac(os, autocorr(i, n));
+      os << std::endl;
     }
   }
+
+  virtual char const * suffix() = 0;
 
 protected:
   virtual void init_output(std::ostream &) = 0;
@@ -189,20 +179,13 @@ protected:
   virtual void init_header(std::ostream &) = 0;
   virtual void write_col_header(std::ostream & os, int i) = 0;
   virtual void write_row_header(std::ostream & os, int i) = 0;
-  virtual void write_value(std::ostream & os, int i, int j) = 0;
+  virtual void write_value(std::ostream & os, int j, double val) = 0;
 
-  std::size_t max_name_len()
-  {
-    // Compute largest variable name length
-    size_t max_name_length = 0;
-    for (int i = skip; i < chains.num_params(); i++) 
-      if (chains.param_name(i).length() > max_name_length)
-        max_name_length = chains.param_name(i).length();
-    for (int i = 0; i < 2; i++) 
-      if (chains.param_name(i).length() > max_name_length)
-        max_name_length = chains.param_name(i).length();
-    return max_name_length;
-  }  
+  virtual void init_output_ac(std::ostream & os, int cidx) = 0;
+  virtual void write_lag_header_ac(std::ostream & os, int n_autocorr) = 0;
+  virtual void write_var_header_ac(std::ostream & os, int i) = 0;
+  virtual void write_row_header_ac(std::ostream & os, int lag) = 0;
+  virtual void write_value_ac(std::ostream & os, double value) = 0;
 };
 
 const int printer::n;
@@ -214,6 +197,11 @@ public:
   csv_printer(int sig_figs_, std::vector<std::string> const & filenames)
     : printer(sig_figs_, filenames)
   {
+  }
+
+  virtual char const * suffix()
+  {
+    return "csv";
   }
 
 private:
@@ -231,10 +219,32 @@ private:
     os << chains.param_name(i);
   }
 
-  virtual void write_value(std::ostream & os, int i, int j)
+  virtual void write_value(std::ostream & os, int j, double val)
   {
     os.unsetf(std::ios::floatfield);
-    os << ',' << std::setprecision(sig_figs) << values(i, j);
+    os << ',' << std::setprecision(sig_figs) << val;
+  }
+
+  virtual void init_output_ac(std::ostream & os, int cidx) { }
+
+  virtual void write_lag_header_ac(std::ostream & os, int n_autocorr)
+  {
+    os << "Lag";
+  }
+
+  virtual void write_var_header_ac(std::ostream & os, int i)
+  {
+    os << "," << chains.param_name(i);
+  }
+
+  virtual void write_row_header_ac(std::ostream & os, int lag)
+  {
+    os << lag;
+  }
+
+  virtual void write_value_ac(std::ostream & os, double val)
+  {
+    os << ',' << std::fixed << std::setprecision(sig_figs) << val;
   }
 };
 
@@ -243,6 +253,7 @@ class text_printer : public printer
   size_t max_name_length;
   Eigen::VectorXi column_widths;
   Eigen::Matrix<std::ios_base::fmtflags, Eigen::Dynamic, 1> formats;
+  int lag_width;
 
 public:
   text_printer(int sig_figs_, std::vector<std::string> const & filenames)
@@ -254,7 +265,26 @@ public:
     column_widths = calculate_column_widths(values, headers, sig_figs, formats);
   }
 
+  virtual char const * suffix()
+  {
+    return "txt";
+  }
+
 private:
+
+  std::size_t max_name_len()
+  {
+    // Compute largest variable name length
+    size_t max_name_length = 0;
+    for (int i = skip; i < chains.num_params(); i++) 
+      if (chains.param_name(i).length() > max_name_length)
+        max_name_length = chains.param_name(i).length();
+    for (int i = 0; i < 2; i++) 
+      if (chains.param_name(i).length() > max_name_length)
+        max_name_length = chains.param_name(i).length();
+    return max_name_length;
+  }  
+
   virtual void init_header(std::ostream & os)
   {
     os << std::setw(max_name_length + 1) << "";
@@ -271,13 +301,12 @@ private:
        << std::right;
   }
 
-  virtual void write_value(std::ostream & os, int i, int j)
+  virtual void write_value(std::ostream & os, int j, double value)
   {
     os.setf(formats(j), std::ios::floatfield);
-    int prec = compute_precision(values(i,j), sig_figs,
+    int prec = compute_precision(value, sig_figs,
 				 formats(j) == std::ios_base::scientific);
-    os << std::setprecision(prec)
-       << std::setw(column_widths(j)) << values(i, j);
+    os << std::setprecision(prec) << std::setw(column_widths(j)) << value;
   }
 
   virtual void init_output(std::ostream & os)
@@ -367,7 +396,49 @@ private:
        << "convergence, R_hat=1)." << std::endl
        << std::endl;
   }
+
+  virtual void init_output_ac(std::ostream & os, int cidx)
+  {
+    os << "Displaying the autocorrelations for chain " << cidx << ":"
+       << std::endl
+       << std::endl;
+  }
+
+  virtual void write_lag_header_ac(std::ostream & os, int n_autocorr)
+  {
+    lag_width = 1;
+    int number = n_autocorr; 
+    while ( number != 0) { number /= 10; lag_width++; }
+
+    os << std::setw(lag_width > 4 ? lag_width : 4) << "Lag";
+  }
+
+  virtual void write_var_header_ac(std::ostream & os, int i)
+  {
+    os << std::setw(max_name_length + 1) << std::right
+       << std::setprecision(sig_figs) << chains.param_name(i);
+  }
+
+  virtual void write_row_header_ac(std::ostream & os, int lag)
+  {
+    os << std::setw(lag_width) << std::right << lag;
+  }
+
+  virtual void write_value_ac(std::ostream & os, double value)
+  {
+    os << std::fixed << std::setprecision(sig_figs)
+       << std::setw(max_name_length + 1) << std::right
+       << value;
+  }
 };
+
+std::string 
+autocorr_fname(std::string const & stub, int cidx, char const * suffix)
+{
+  std::ostringstream is;
+  is << stub << '-' << cidx << '.' << suffix;
+  return is.str();
+}
 
 /**
  * The Stan print function.
@@ -388,13 +459,13 @@ int main(int argc, const char* argv[]) {
   // Parse any arguments specifying filenames
   std::vector<std::string> filenames;
   bool csv_output = false;
-  int corr_len = -1;
+  char const * ac_fname_stub = 0;
   int sig_figs = 2;
   
   for (int i = 1; i < argc; i++) {
     
     if (std::strncmp(argv[i], "--autocorr=", 11) == 0) {
-      corr_len = atoi(argv[i] + 11);
+      ac_fname_stub = argv[i] + 11;
       continue;
     }
     
@@ -434,8 +505,14 @@ int main(int argc, const char* argv[]) {
   prnt->print(std::cout);
   
   // Print autocorrelation, if desired
-  if (!csv_output && corr_len >= 0)
-    prnt->print_autocorr(corr_len);
+  if (ac_fname_stub != 0) {
+    char const * sfx = prnt->suffix();
+    for (size_t cidx = 0; cidx < filenames.size(); ++cidx) {
+      std::string fname = autocorr_fname(ac_fname_stub, cidx, sfx);
+      std::ofstream os(fname.c_str());
+      prnt->print_autocorr(os, cidx);
+    }
+  }
 
   return 0;
         
